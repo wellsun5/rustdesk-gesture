@@ -31,6 +31,14 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      # vcpkg binary cache 依赖这两个变量；官方 flutter-build.yml 也有这一步
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Verify gesture patch is applied
         run: |
           grep -q "AVNC-style gesture patch" flutter/lib/common/widgets/remote_input.dart \
@@ -48,6 +56,8 @@ jobs:
         with:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ env.FLUTTER_VERSION }}
 
       - name: Patch Flutter (dropdown filter diff)
         run: |
@@ -74,7 +84,27 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "rustfmt"
 
+      # Rust target/ + cargo registry 增量缓存（官方 Android job 同款）
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: rustdesk-avnc-android
+          key: ${{ env.TARGET }}
+          cache-on-failure: true
+
+      # cargo install 的三个 codegen 工具很慢，单独缓存 ~/.cargo/bin
+      - name: Cache cargo codegen tools
+        id: cache-cargo-tools
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3
+        with:
+          path: |
+            ~/.cargo/bin/cargo-expand
+            ~/.cargo/bin/flutter_rust_bridge_codegen
+            ~/.cargo/bin/cargo-ndk
+          key: cargo-tools-${{ runner.os }}-expand${{ env.CARGO_EXPAND_VERSION }}-frb${{ env.FLUTTER_RUST_BRIDGE_VERSION }}-ndk${{ env.CARGO_NDK_VERSION }}
+
       - name: Install bridge codegen tools
+        if: steps.cache-cargo-tools.outputs.cache-hit != 'true'
         run: |
           cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
           cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid" --locked
@@ -125,6 +155,16 @@ jobs:
           # release signing needs a keystore the fork doesn't have; use auto debug key
           sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' ./flutter/android/app/build.gradle
           grep 'signingConfig signingConfigs' ./flutter/android/app/build.gradle
+
+      - name: Cache Gradle
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('flutter/android/**/*.gradle*', 'flutter/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Build Flutter APK (arm64)
         working-directory: flutter
