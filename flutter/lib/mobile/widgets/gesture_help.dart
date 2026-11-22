@@ -295,17 +295,17 @@ class _GestureHelpState extends State<GestureHelp> {
                               width,
                               GestureIcons.iconGestureFSwipeRight,
                               translate("One-Finger Move"),
+                              translate("Canvas Move")),
+                          GestureInfo(
+                              width,
+                              GestureIcons.iconGestureFDrag,
+                              translate("One-Long Tap & Move"),
                               translate("Mouse Drag")),
                           GestureInfo(
                               width,
                               GestureIcons.iconGestureFThreeFingers,
-                              translate("Three-Finger vertically"),
+                              translate("Two-Finger Slide"),
                               translate("Mouse Wheel")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFDrag,
-                              translate("Two-Finger Move"),
-                              translate("Canvas Move")),
                           GestureInfo(
                               width,
                               GestureIcons.iconGesturePinch,
@@ -331,13 +331,13 @@ class _GestureHelpState extends State<GestureHelp> {
                           GestureInfo(
                               width,
                               GestureIcons.iconGestureFThreeFingers,
-                              translate("Three-Finger vertically"),
+                              translate("Two-Finger Slide"),
                               translate("Mouse Wheel")),
                           GestureInfo(
                               width,
                               GestureIcons.iconGestureFDrag,
-                              translate("Two-Finger Move"),
-                              translate("Canvas Move")),
+                              translate("One-Long Tap & Move"),
+                              translate("Mouse Drag")),
                           GestureInfo(
                               width,
                               GestureIcons.iconGesturePinch,

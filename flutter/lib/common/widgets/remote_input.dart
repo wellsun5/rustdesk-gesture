@@ -97,6 +97,11 @@ class _RawTouchGestureDetectorRegionState
   // ---- AVNC-style gesture patch ----
   // True after a long-press has turned into a drag (long press + move = left drag / selection).
   bool _longPressDragStarted = false;
+  // Dead zone: finger jitter during a long press must NOT be treated as a drag,
+  // otherwise the right-click (fired on long-press release) never happens.
+  // Only when the finger moves beyond this distance from the long-press origin
+  // do we switch to box-selection (left drag).
+  static const double kLongPressDragSlop = 12.0;
   // True once a two-finger gesture has been classified as scroll (vs pinch-zoom), so it
   // stays scroll for the whole gesture even if fingers momentarily move apart/together.
   bool _twoFingerScrolling = false;
@@ -333,8 +338,16 @@ class _RawTouchGestureDetectorRegionState
     if (!handleTouch) {
       return;
     }
-    // First move after the long press: press the left button, then drag the cursor.
+    // ---- AVNC-style gesture patch: long-press drag dead zone ----
+    // Ignore small finger jitter right after the long press fires. Without this
+    // slop, a normal press (which always wobbles a few pixels) is classified as
+    // a drag, so onLongPressUp sends left-up instead of the right-click.
     if (!_longPressDragStarted) {
+      final double dist = (d.localPosition - _cacheLongPressPosition).distance;
+      if (dist < kLongPressDragSlop) {
+        return;
+      }
+      // Beyond the dead zone: this is a genuine long-press + drag (box select).
       if (!ffi.cursorModel.isInRemoteRect(d.localPosition)) {
         return;
       }

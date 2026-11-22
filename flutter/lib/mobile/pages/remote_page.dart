@@ -372,6 +372,20 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   void _handleNonIOSSoftKeyboardInput(String newValue) {
     var oldValue = _value;
+
+    // ---- AVNC-gesture build: composing-aware text diff ----
+    // Chinese/Japanese IMEs go through a composing (pinyin) phase before the
+    // user picks the final character. While composing, the text field keeps
+    // changing but nothing should reach the remote yet. Freezing the shadow
+    // value (_value) here means the commit event diffs against the PRE-pinyin
+    // text, so the remote receives only the final characters and no phantom
+    // backspaces. This also fixes the "eats characters" bug: the old code did
+    // nothing when lengths were equal, so an equal-length replacement such as
+    // pinyin "n" -> hanzi "你" (both 1 char) was silently dropped.
+    if (_textController.value.isComposingRangeValid) {
+      return; // keep _value unchanged (still the pre-composing text)
+    }
+
     _value = newValue;
     if (oldValue.isNotEmpty &&
         newValue.isNotEmpty &&
@@ -380,39 +394,55 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       // clipboard
       oldValue = '';
     }
-    // This length-only diff assumes the IME appends at the end. If an IME
-    // leaves the caret inside paired punctuation, later insertions can replay
-    // the closing symbol: "()" -> "(a)" sends ")" instead of "a". This is a
-    // client text-diff issue, independent of the host keyboard layout.
-    if (newValue.length == oldValue.length) {
-      // ?
-    } else if (newValue.length < oldValue.length) {
-      final char = 'VK_BACK';
-      inputModel.inputKey(char);
-    } else {
-      final content = newValue.substring(oldValue.length);
-      if (content.length > 1) {
-        if (oldValue != '' &&
-            content.length == 2 &&
-            (content == '""' ||
-                content == '()' ||
-                content == '[]' ||
-                content == '<>' ||
-                content == "{}" ||
-                content == '”“' ||
-                content == '《》' ||
-                content == '（）' ||
-                content == '【】')) {
-          // can not only input content[0], because when input ], [ are also auo insert, which cause ] never be input
-          bind.sessionInputString(sessionId: sessionId, value: content);
-          _openKeyboardUnlocked();
-          return;
-        }
-        bind.sessionInputString(sessionId: sessionId, value: content);
-      } else {
-        inputChar(content);
-      }
+
+    // Character-level diff between the real text after the '1' sentinel.
+    // Works for insert, delete AND equal-length replacement.
+    var i = newValue.length - 1;
+    for (; i >= 0 && newValue[i] != '1'; --i) {}
+    var j = oldValue.length - 1;
+    for (; j >= 0 && oldValue[j] != '1'; --j) {}
+    if (i < j) j = i;
+    final subNewValue = newValue.substring(j + 1);
+    final subOldValue = oldValue.substring(j + 1);
+
+    var common = 0;
+    for (;
+        common < subOldValue.length &&
+            common < subNewValue.length &&
+            subNewValue[common] == subOldValue[common];
+        ++common) {}
+
+    var newStr = '';
+    if (subNewValue.length > common) {
+      newStr = subNewValue.substring(common);
     }
+
+    // Delete the changed tail from the old value.
+    for (var k = 0; k < subOldValue.length - common; ++k) {
+      inputModel.inputKey('VK_BACK');
+    }
+    // Type the new tail.
+    if (newStr.length > 1) {
+      if (oldValue != '' &&
+          newStr.length == 2 &&
+          (newStr == '""' ||
+              newStr == '()' ||
+              newStr == '[]' ||
+              newStr == '<>' ||
+              newStr == "{}" ||
+              newStr == '”“' ||
+              newStr == '《》' ||
+              newStr == '（）' ||
+              newStr == '【】')) {
+        bind.sessionInputString(sessionId: sessionId, value: newStr);
+        _openKeyboardUnlocked();
+        return;
+      }
+      bind.sessionInputString(sessionId: sessionId, value: newStr);
+    } else if (newStr.isNotEmpty) {
+      inputChar(newStr);
+    }
+    // ---- end composing-aware diff ----
   }
 
   // handle mobile virtual keyboard
