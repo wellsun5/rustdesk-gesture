@@ -510,7 +510,9 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
     // ---- AVNC-style gesture patch ----
-    _twoFingerStartScale = d.scale.isFinite && d.scale > 0 ? d.scale : 1;
+    // ScaleUpdateDetails.scale is normalized so it starts at 1.0 for every
+    // gesture, so the baseline is always 1 (ScaleStartDetails has no .scale).
+    _twoFingerStartScale = 1;
     _scale = _twoFingerStartScale;
     _twoFingerScrollIntegral = 0;
     // Decide on the first update whether this is a scroll (pan) or a pinch (zoom).
