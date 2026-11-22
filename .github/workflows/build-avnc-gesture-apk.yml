@@ -1,0 +1,126 @@
+name: Build RustDesk APK (AVNC gestures)
+
+# 精简版 Android 编译：单 job、无 secrets、只编 arm64。
+# 严格照官方 flutter-build.yml + bridge.yml 的参数串成一条流水线：
+#   bridge 生成 -> vcpkg 依赖 -> Rust .so -> Flutter APK
+# 触发：push 到任意分支 或 手动 Run workflow。
+# 产物：rustdesk-avnc-gesture-arm64.apk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+
+env:
+  FLUTTER_VERSION: "3.24.5"
+  RUST_VERSION: "1.75"
+  CARGO_NDK_VERSION: "3.1.2"
+  CARGO_EXPAND_VERSION: "1.1.19"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
+  NDK_VERSION: "r28c"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  TARGET: aarch64-linux-android
+
+jobs:
+  build-android:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Verify gesture patch is applied
+        run: |
+          grep -q "AVNC-style gesture patch" flutter/lib/common/widgets/remote_input.dart \
+            || { echo "ERROR: remote_input.dart 未包含 AVNC 手势 patch"; exit 1; }
+          echo "OK: AVNC 手势 patch 已就位"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Patch Flutter (dropdown filter diff)
+        run: |
+          cd $(dirname $(dirname $(which flutter)))
+          git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff || true
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: "rustfmt"
+
+      - name: Install bridge codegen tools
+        run: |
+          cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
+          cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid" --locked
+          cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
+
+      - name: Flutter pub get
+        run: cd flutter && flutter pub get
+
+      - name: Generate bridge code
+        run: |
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+          cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h || true
+
+      - name: Install vcpkg dependencies (arm64)
+        run: ./flutter/build_android_deps.sh arm64-v8a
+        shell: bash
+
+      - name: Build Rust core for Android arm64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          rustup target add ${{ env.TARGET }}
+          ./flutter/ndk_arm64.sh
+          mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
+          cp ./target/${{ env.TARGET }}/release/liblibrustdesk.so \
+             ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
+
+      - name: Build Flutter APK (arm64)
+        working-directory: flutter
+        run: |
+          flutter build apk --split-per-abi --target-platform android-arm64 --release
+
+      - name: Collect APK
+        run: |
+          APK=$(find ./flutter/build/app/outputs/flutter-apk -name "app-arm64-v8a-release.apk" | head -1)
+          [ -n "$APK" ] || { echo "ERROR: APK 未生成"; exit 1; }
+          cp "$APK" ./rustdesk-avnc-gesture-arm64.apk
+          ls -lh ./rustdesk-avnc-gesture-arm64.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-avnc-gesture-arm64
+          path: rustdesk-avnc-gesture-arm64.apk
+          retention-days: 30

@@ -91,7 +91,18 @@ class _RawTouchGestureDetectorRegionState
   // Timestamp of the last long press event.
   int _cacheLongPressPositionTs = 0;
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
+  double _twoFingerScrollIntegral = 0; // AVNC-style two-finger scroll accumulator
   double _scale = 1;
+
+  // ---- AVNC-style gesture patch ----
+  // True after a long-press has turned into a drag (long press + move = left drag / selection).
+  bool _longPressDragStarted = false;
+  // True once a two-finger gesture has been classified as scroll (vs pinch-zoom), so it
+  // stays scroll for the whole gesture even if fingers momentarily move apart/together.
+  bool _twoFingerScrolling = false;
+  // Cached scale at the start of a two-finger gesture, used to detect pinch vs pan.
+  double _twoFingerStartScale = 1;
+  // ---- end AVNC-style gesture patch ----
 
   // Workaround tap down event when two fingers are used to scale(mobile)
   TapDownDetails? _lastTapDownDetails;
@@ -255,9 +266,24 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
-    if (handleTouch) {
-      await inputModel.tapUp(MouseButtons.left);
+    if (!handleTouch) {
+      // Mouse mode: right click was already sent in onLongPress.
+      return;
     }
+    // ---- AVNC-style gesture patch ----
+    if (!ffi.ffiModel.isPeerMobile) {
+      if (_longPressDragStarted) {
+        // Long press + drag: release the left button pressed in onLongPressMoveUpdate.
+        await inputModel.tapUp(MouseButtons.left);
+        _longPressDragStarted = false;
+      } else {
+        // Pure long press (no drag): this is the right click.
+        await inputModel.tap(MouseButtons.right);
+      }
+      return;
+    }
+    // Mobile peer: original behaviour (left down was sent in onLongPressDown).
+    await inputModel.tapUp(MouseButtons.left);
   }
 
   // for mobiles
@@ -267,17 +293,20 @@ class _RawTouchGestureDetectorRegionState
     }
     if (!ffi.ffiModel.isPeerMobile) {
       if (handleTouch) {
-        final isMoved = await ffi.cursorModel
-            .move(_cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
-        if (!isMoved) {
-          return;
-        }
+        // ---- AVNC-style gesture patch ----
+        // Defer the right click to onLongPressUp. Reason: if the user drags after
+        // the long press, we want a left-button drag (box selection), not a right
+        // click that pops a context menu. onLongPressUp decides based on
+        // _longPressDragStarted.
+        await ffi.cursorModel.move(
+            _cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
       } else {
+        // Mouse mode keeps the original immediate right click.
         if (shouldBlockMouseModeEvent()) {
           return;
         }
+        await inputModel.tap(MouseButtons.right);
       }
-      await inputModel.tap(MouseButtons.right);
     } else {
       // It's better to send a message to tell the controlled device that the long press event is triggered.
       // We're now using a `TimerTask` in `InputService.kt` to decide whether to trigger the long press event.
@@ -286,15 +315,35 @@ class _RawTouchGestureDetectorRegionState
   }
 
   onLongPressMoveUpdate(LongPressMoveUpdateDetails d) async {
-    if (!ffiModel.isPeerMobile || isNotTouchBasedDevice()) {
+    if (isNotTouchBasedDevice()) {
       return;
     }
-    if (handleTouch) {
+    // ---- AVNC-style gesture patch ----
+    // Long press + drag = left-button drag / box selection on a PC peer.
+    // For a mobile peer keep the original behaviour (finger follows on remote screen).
+    if (ffiModel.isPeerMobile) {
+      if (handleTouch) {
+        if (!ffi.cursorModel.isInRemoteRect(d.localPosition)) {
+          return;
+        }
+        await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
+      }
+      return;
+    }
+    if (!handleTouch) {
+      return;
+    }
+    // First move after the long press: press the left button, then drag the cursor.
+    if (!_longPressDragStarted) {
       if (!ffi.cursorModel.isInRemoteRect(d.localPosition)) {
         return;
       }
       await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
+      await inputModel.tapDown(MouseButtons.left);
+      _longPressDragStarted = true;
     }
+    await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
+    // ---- end AVNC-style gesture patch ----
   }
 
   onDoubleFinerTapDown(TapDownDetails d) async {
@@ -386,11 +435,15 @@ class _RawTouchGestureDetectorRegionState
         await ffi.cursorModel
             .move(_cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
       }
-      // In relative mouse mode, skip mouse down - only send movement via sendMobileRelativeMouseMove
-      if (!inputModel.relativeMouseMode.value) {
-        await inputModel.sendMouse('down', MouseButtons.left);
+      // ---- AVNC-style gesture patch ----
+      // One-finger drag = pan the whole remote screen (move the view), NOT a
+      // left-button drag. So do NOT send mouse-down here. Box selection is done
+      // by long-press + drag instead (see onLongPressMoveUpdate).
+      // Keep the cursor positioned for taps/right-clicks, but no left down.
+      if (!ffi.ffiModel.isPeerMobile) {
+        await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
       }
-      await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
+      // ---- end AVNC-style gesture patch ----
     } else {
       final offset = ffi.cursorModel.offset;
       final cursorX = offset.dx;
@@ -414,12 +467,18 @@ class _RawTouchGestureDetectorRegionState
     if (handleTouch && !_touchModePanStarted) {
       return;
     }
-    // In relative mouse mode, send delta directly without position tracking.
-    if (inputModel.relativeMouseMode.value) {
+    // ---- AVNC-style gesture patch ----
+    // One-finger drag on a PC peer = pan the whole remote screen (move the view).
+    // Keep relative-mouse mode untouched (needed for games / absolute pointing).
+    if (handleTouch && !inputModel.relativeMouseMode.value && !ffi.ffiModel.isPeerMobile) {
+      ffi.canvasModel.panX(d.delta.dx);
+      ffi.canvasModel.panY(d.delta.dy);
+    } else if (inputModel.relativeMouseMode.value) {
       await inputModel.sendMobileRelativeMouseMove(d.delta.dx, d.delta.dy);
     } else {
       await ffi.cursorModel.updatePan(d.delta, d.localPosition, handleTouch);
     }
+    // ---- end AVNC-style gesture patch ----
   }
 
   onOneFingerPanEnd(DragEndDetails d) async {
@@ -430,12 +489,10 @@ class _RawTouchGestureDetectorRegionState
     if (isDesktop || isWebDesktop) {
       ffi.cursorModel.clearRemoteWindowCoords();
     }
-    if (handleTouch) {
-      // In relative mouse mode, skip mouse up - matches the skipped mouse down in onOneFingerPanStart
-      if (!inputModel.relativeMouseMode.value) {
-        await inputModel.sendMouse('up', MouseButtons.left);
-      }
-    }
+    // ---- AVNC-style gesture patch ----
+    // One-finger drag no longer sends a left down/up (it pans the view), so no
+    // left up to release here. Relative-mouse mode never sent a down either.
+    // ---- end AVNC-style gesture patch ----
   }
 
   // Reset `_touchModePanStarted` if the one-finger pan gesture is cancelled
@@ -452,6 +509,13 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    // ---- AVNC-style gesture patch ----
+    _twoFingerStartScale = d.scale.isFinite && d.scale > 0 ? d.scale : 1;
+    _scale = _twoFingerStartScale;
+    _twoFingerScrollIntegral = 0;
+    // Decide on the first update whether this is a scroll (pan) or a pinch (zoom).
+    _twoFingerScrolling = false;
+    // ---- end AVNC-style gesture patch ----
     if (isSpecialHoldDragActive) {
       // Initialize the last focal point to calculate deltas manually.
       _lastSpecialHoldDragFocalPoint = d.focalPoint;
@@ -488,10 +552,48 @@ class _RawTouchGestureDetectorRegionState
       }
     } else {
       // mobile
-      ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
-      _scale = d.scale;
-      ffi.canvasModel.panX(d.focalPointDelta.dx);
-      ffi.canvasModel.panY(d.focalPointDelta.dy);
+      // ---- AVNC-style gesture patch ----
+      // Two fingers sliding (little scale change) = mouse wheel scroll.
+      // Two fingers pinching (large scale change) = zoom (original behaviour).
+      // Classification happens once per gesture and is locked for its duration.
+      final double scaleRatio = (_twoFingerStartScale > 0)
+          ? (d.scale / _twoFingerStartScale)
+          : 1;
+      // Classification is locked for the whole gesture: once we decide it is a
+      // scroll, small finger-distance wobble must not flip it into a zoom.
+      if (_twoFingerScrolling) {
+        _mouseScrollIntegral += d.focalPointDelta.dy / 4;
+        if (_mouseScrollIntegral > 1) {
+          inputModel.scroll(1);
+          _mouseScrollIntegral = 0;
+        } else if (_mouseScrollIntegral < -1) {
+          inputModel.scroll(-1);
+          _mouseScrollIntegral = 0;
+        }
+        _scale = d.scale;
+      } else if ((scaleRatio - 1).abs() > 0.15) {
+        // Clear pinch/zoom: fingers moved apart/together significantly.
+        ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
+        _scale = d.scale;
+      } else if (!ffi.ffiModel.isPeerMobile) {
+        // PC peer + mostly-parallel two-finger slide => wheel scroll.
+        _twoFingerScrolling = true;
+        _mouseScrollIntegral += d.focalPointDelta.dy / 4;
+        if (_mouseScrollIntegral > 1) {
+          inputModel.scroll(1);
+          _mouseScrollIntegral = 0;
+        } else if (_mouseScrollIntegral < -1) {
+          inputModel.scroll(-1);
+          _mouseScrollIntegral = 0;
+        }
+        _scale = d.scale;
+      } else {
+        // Mobile peer + no pinch: keep original pan behaviour.
+        _scale = d.scale;
+        ffi.canvasModel.panX(d.focalPointDelta.dx);
+        ffi.canvasModel.panY(d.focalPointDelta.dy);
+      }
+      // ---- end AVNC-style gesture patch ----
     }
   }
 
@@ -508,27 +610,27 @@ class _RawTouchGestureDetectorRegionState
     } else {
       // mobile
       _scale = 1;
-      // No idea why we need to set the view style to "" here.
-      // bind.sessionSetViewStyle(sessionId: sessionId, value: "");
+      // ---- AVNC-style gesture patch: reset two-finger classification ----
+      _twoFingerScrolling = false;
+      _twoFingerScrollIntegral = 0;
+      _twoFingerStartScale = 1;
     }
-    if (!isSpecialHoldDragActive) {
+    // ---- AVNC-style gesture patch ----
+    // For a PC peer in touch mode, two-finger scroll/pinch never pressed a mouse
+    // button, so there is no left button to release here.
+    if (!isSpecialHoldDragActive && !(handleTouch && !ffi.ffiModel.isPeerMobile)) {
       await inputModel.sendMouse('up', MouseButtons.left);
     }
   }
 
   get onHoldDragCancel => null;
-  get onThreeFingerVerticalDragUpdate => ffi.ffiModel.isPeerAndroid
-      ? null
-      : (d) {
-          _mouseScrollIntegral += d.delta.dy / 4;
-          if (_mouseScrollIntegral > 1) {
-            inputModel.scroll(1);
-            _mouseScrollIntegral = 0;
-          } else if (_mouseScrollIntegral < -1) {
-            inputModel.scroll(-1);
-            _mouseScrollIntegral = 0;
-          }
-        };
+  // ---- AVNC-style gesture patch ----
+  // Three-finger scroll disabled: on the phone it collides with the system
+  // three-finger swipe (screenshot), and wheel scrolling is now done with two
+  // fingers (see onTwoFingerScaleUpdate). Returning null keeps the recognizer
+  // from consuming the gesture, so the phone's own gesture can work normally.
+  get onThreeFingerVerticalDragUpdate => null;
+  // ---- end AVNC-style gesture patch ----
 
   makeGestures(BuildContext context) {
     return <Type, GestureRecognizerFactory>{
