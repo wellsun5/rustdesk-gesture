@@ -118,10 +118,13 @@ jobs:
           cp ./target/${{ env.TARGET }}/release/liblibrustdesk.so \
              ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
 
-      - name: Raise Gradle heap (R8 needs >1GB)
+      - name: Raise Gradle heap + use debug signing (no keystore in fork)
         run: |
           sed -i 's/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx4g/' ./flutter/android/gradle.properties
           grep 'org.gradle.jvmargs' ./flutter/android/gradle.properties
+          # release signing needs a keystore the fork doesn't have; use auto debug key
+          sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' ./flutter/android/app/build.gradle
+          grep 'signingConfig signingConfigs' ./flutter/android/app/build.gradle
 
       - name: Build Flutter APK (arm64)
         working-directory: flutter
