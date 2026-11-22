@@ -275,9 +275,14 @@ class _FloatingMouseState extends State<FloatingMouse> {
   void _resetPosition() {
     setState(() {
       final size = MediaQuery.of(context).size;
+      // AVNC-gesture build: park the virtual mouse at the bottom-right corner
+      // instead of dead center, so it never covers what you are looking at.
+      // Expansion grows up-left (_expandOffset is subtracted), so bottom-right
+      // is the safe corner that keeps the expanded mouse fully on screen.
+      const double cornerMargin = 8.0;
       _position = Offset(
-        (size.width - _baseMouseWidth * _mouseScale) / 2,
-        (size.height - _baseMouseHeight * _mouseScale) / 2,
+        size.width - _baseMouseWidth * _mouseScale - cornerMargin,
+        size.height - _baseMouseHeight * _mouseScale - cornerMargin,
       );
       _isInitialized = true;
     });

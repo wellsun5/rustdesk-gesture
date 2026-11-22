@@ -371,57 +371,45 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   void _handleNonIOSSoftKeyboardInput(String newValue) {
+    // ---- AVNC-gesture build: robust text diff (voice + pinyin safe) ----
+    // Design notes:
+    //  * DO NOT consult isComposingRangeValid here. Voice IMEs keep the whole
+    //    dictation marked as "composing" and may never fire a commit event;
+    //    freezing on composing (previous build) swallowed every word.
+    //  * Instead diff the raw text against the shadow value (_value) on every
+    //    change. The '1'*1024 sentinel prefix is identical on both sides, so a
+    //    plain common-prefix scan naturally skips it.
+    //  * New tail is sent in ONE sessionInputString call -> dictation/paste of
+    //    a long paragraph arrives atomically (fast, no per-char round trips).
+    //  * Common-prefix diff also handles equal-length replacement (pinyin "n"
+    //    -> hanzi "你"), which the old length-only branch silently dropped.
     var oldValue = _value;
-
-    // ---- AVNC-gesture build: composing-aware text diff ----
-    // Chinese/Japanese IMEs go through a composing (pinyin) phase before the
-    // user picks the final character. While composing, the text field keeps
-    // changing but nothing should reach the remote yet. Freezing the shadow
-    // value (_value) here means the commit event diffs against the PRE-pinyin
-    // text, so the remote receives only the final characters and no phantom
-    // backspaces. This also fixes the "eats characters" bug: the old code did
-    // nothing when lengths were equal, so an equal-length replacement such as
-    // pinyin "n" -> hanzi "你" (both 1 char) was silently dropped.
-    if (_textController.value.isComposingRangeValid) {
-      return; // keep _value unchanged (still the pre-composing text)
-    }
-
     _value = newValue;
     if (oldValue.isNotEmpty &&
         newValue.isNotEmpty &&
         oldValue[0] == '1' &&
         newValue[0] != '1') {
-      // clipboard
+      // clipboard replaced the whole sentinel string
       oldValue = '';
     }
 
-    // Character-level diff between the real text after the '1' sentinel.
-    // Works for insert, delete AND equal-length replacement.
-    var i = newValue.length - 1;
-    for (; i >= 0 && newValue[i] != '1'; --i) {}
-    var j = oldValue.length - 1;
-    for (; j >= 0 && oldValue[j] != '1'; --j) {}
-    if (i < j) j = i;
-    final subNewValue = newValue.substring(j + 1);
-    final subOldValue = oldValue.substring(j + 1);
-
+    // Common prefix between old and new text.
     var common = 0;
-    for (;
-        common < subOldValue.length &&
-            common < subNewValue.length &&
-            subNewValue[common] == subOldValue[common];
-        ++common) {}
-
-    var newStr = '';
-    if (subNewValue.length > common) {
-      newStr = subNewValue.substring(common);
+    final maxCommon = oldValue.length < newValue.length
+        ? oldValue.length
+        : newValue.length;
+    while (common < maxCommon && oldValue[common] == newValue[common]) {
+      common++;
     }
 
-    // Delete the changed tail from the old value.
-    for (var k = 0; k < subOldValue.length - common; ++k) {
+    // Tail that disappeared from the old value -> backspaces.
+    final deleteCount = oldValue.length - common;
+    for (var k = 0; k < deleteCount; ++k) {
       inputModel.inputKey('VK_BACK');
     }
-    // Type the new tail.
+
+    // Tail that appeared in the new value -> type it in one shot.
+    final newStr = newValue.substring(common);
     if (newStr.length > 1) {
       if (oldValue != '' &&
           newStr.length == 2 &&
@@ -439,10 +427,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         return;
       }
       bind.sessionInputString(sessionId: sessionId, value: newStr);
-    } else if (newStr.isNotEmpty) {
+    } else if (newStr.length == 1) {
       inputChar(newStr);
     }
-    // ---- end composing-aware diff ----
+    // ---- end robust text diff ----
   }
 
   // handle mobile virtual keyboard
