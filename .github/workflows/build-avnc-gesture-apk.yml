@@ -91,6 +91,11 @@ jobs:
             --c-output ./flutter/macos/Runner/bridge_generated.h
           cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h || true
 
+      - name: Install system build deps (nasm etc. for aom/libvpx)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm meson ninja-build pkg-config yasm
+
       - name: Install vcpkg dependencies (arm64)
         run: ./flutter/build_android_deps.sh arm64-v8a
         shell: bash
