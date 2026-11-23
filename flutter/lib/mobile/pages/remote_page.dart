@@ -500,6 +500,49 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
+  // AVNC-style text input: type locally in a visible field (so the IME can
+  // freely compose/pick candidates), then send the whole text in one shot.
+  // This avoids the per-keystroke diff that drops characters with voice/pinyin.
+  void _showTextInputDialog() {
+    if (ffiModel.viewOnly || !ffiModel.keyboard) return;
+    final controller = TextEditingController();
+    gFFI.dialogManager.show<void>((setState, close, context) {
+      void send() {
+        final text = controller.text;
+        if (text.isNotEmpty) {
+          bind.sessionInputString(sessionId: sessionId, value: text);
+        }
+        close();
+      }
+
+      return AlertDialog(
+        title: Text(translate('Text input')),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLines: 6,
+            minLines: 3,
+            autocorrect: false,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            decoration: InputDecoration(
+              hintText: translate('Input text to send to remote'),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+        ),
+        actions: [
+          dialogButton("Cancel", icon: const Icon(Icons.close_rounded),
+              onPressed: close, isOutline: true),
+          dialogButton("Send", icon: const Icon(Icons.send_rounded),
+              onPressed: send),
+        ],
+      );
+    });
+  }
+
   Widget _bottomWidget() => _showGestureHelp
       ? getGestureHelp()
       : (_showBar && gFFI.ffiModel.pi.displays.isNotEmpty
@@ -656,6 +699,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                   icon: Icon(Icons.keyboard),
                                   onPressed: openKeyboard),
                               IconButton(
+                                  color: Colors.white,
+                                  icon: Icon(Icons.text_fields),
+                                  tooltip: translate('Text input'),
+                                  onPressed: _showTextInputDialog),
+                              IconButton(
                                 color: Colors.white,
                                 icon: const Icon(Icons.build),
                                 onPressed: () => gFFI.dialogManager
@@ -667,6 +715,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                   color: Colors.white,
                                   icon: Icon(Icons.keyboard),
                                   onPressed: openKeyboard),
+                              IconButton(
+                                  color: Colors.white,
+                                  icon: Icon(Icons.text_fields),
+                                  tooltip: translate('Text input'),
+                                  onPressed: _showTextInputDialog),
                               IconButton(
                                 color: Colors.white,
                                 icon: Icon(gFFI.ffiModel.touchMode

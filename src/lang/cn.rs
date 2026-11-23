@@ -89,6 +89,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Show Hidden Files", "显示隐藏文件"),
         ("Receive", "接受"),
         ("Send", "发送"),
+        ("Text input", "文本输入"),
+        ("Input text to send to remote", "输入文本发送到远端"),
         ("Refresh File", "刷新文件"),
         ("Local", "本地"),
         ("Remote", "远程"),
