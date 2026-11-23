@@ -504,7 +504,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   // freely compose/pick candidates), then send the whole text in one shot.
   // This avoids the per-keystroke diff that drops characters with voice/pinyin.
   void _showTextInputDialog() {
-    if (ffiModel.viewOnly || !ffiModel.keyboard) return;
+    if (gFFI.ffiModel.viewOnly || !gFFI.ffiModel.keyboard) return;
     final controller = TextEditingController();
     gFFI.dialogManager.show<void>((setState, close, context) {
       void send() {
@@ -515,7 +515,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         close();
       }
 
-      return AlertDialog(
+      return CustomAlertDialog(
         title: Text(translate('Text input')),
         content: SizedBox(
           width: double.maxFinite,
