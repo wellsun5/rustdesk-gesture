@@ -95,6 +95,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Orientation? _currentOrientation;
   final _uniqueKey = UniqueKey();
   Timer? _iosKeyboardWorkaroundTimer;
+  // IME commit debounce: mobile IMEs fire onChanged many times during pinyin
+  // composing. We only diff the FINAL settled text against what we already
+  // sent, so intermediate composing states never leak and paired-punctuation
+  // replays are impossible. This is intentionally different from v4 (freeze
+  // on composing) and v5 (diff on every change).
+  Timer? _imeCommitTimer;
+  int _imeCommitRetries = 0;
+  String _pendingImeText = '';
 
   final _blockableOverlayState = BlockableOverlayState();
 
@@ -188,6 +196,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Future<void> dispose() async {
     HardwareKeyboard.instance.removeHandler(_handleLocalKeyEvent);
     WidgetsBinding.instance.removeObserver(this);
+    _imeCommitTimer?.cancel();
     // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
     // after several awaits (canvas save, image update, the `enable_soft_keyboard`
     // platform call), so if the app is backgrounded while this page is disposing,
@@ -370,52 +379,79 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
   }
 
+  // Debounced, char-level IME diff (v8).
+  // Why: mobile IMEs emit a burst of onChanged callbacks while the user is
+  // still composing pinyin. Diffing every intermediate state (v5) or assuming
+  // appends-at-end (v7) both lose/replay characters around CJK + paired
+  // punctuation. Correct approach: wait until the IME has committed, then
+  // diff the settled text against the last text we actually sent.
   void _handleNonIOSSoftKeyboardInput(String newValue) {
-    // Reverted to upstream length-only diff (v7): this is the version the user
-    // confirmed working. The "robust common-prefix diff" (v5) broke normal
-    // typing into remote text fields, so do not reintroduce it here.
+    _pendingImeText = newValue;
+    // Still composing (pinyin candidates showing) -> do NOT touch remote.
+    // Keep refreshing the debounce timer until composing ends.
+    if (_textController.value.isComposingRangeValid) {
+      _imeCommitTimer?.cancel();
+      _imeCommitTimer = Timer(const Duration(milliseconds: 120), _flushImeDiff);
+      return;
+    }
+    // Text settled: short debounce coalesces the trailing onChanged burst.
+    _imeCommitTimer?.cancel();
+    _imeCommitTimer = Timer(const Duration(milliseconds: 90), _flushImeDiff);
+  }
+
+  void _flushImeDiff() {
+    if (!mounted || !inputModel.keyboardInputAllowed) return;
+    // Composing resumed during the debounce window -> wait again (bounded).
+    if (_textController.value.isComposingRangeValid && _imeCommitRetries < 20) {
+      _imeCommitRetries++;
+      _imeCommitTimer = Timer(const Duration(milliseconds: 120), _flushImeDiff);
+      return;
+    }
+    _imeCommitRetries = 0;
+
+    final newFull = _pendingImeText;
     var oldValue = _value;
-    _value = newValue;
+    // Clipboard sentinel: RustDesk uses leading '1' as a clipboard placeholder;
+    // when it disappears, treat the whole field as new content.
     if (oldValue.isNotEmpty &&
-        newValue.isNotEmpty &&
+        newFull.isNotEmpty &&
         oldValue[0] == '1' &&
-        newValue[0] != '1') {
-      // clipboard
+        newFull[0] != '1') {
       oldValue = '';
     }
-    // This length-only diff assumes the IME appends at the end. If an IME
-    // leaves the caret inside paired punctuation, later insertions can replay
-    // the closing symbol: "()" -> "(a)" sends ")" instead of "a". This is a
-    // client text-diff issue, independent of the host keyboard layout.
-    if (newValue.length == oldValue.length) {
-      // ?
-    } else if (newValue.length < oldValue.length) {
-      final char = 'VK_BACK';
-      inputModel.inputKey(char);
-    } else {
-      final content = newValue.substring(oldValue.length);
-      if (content.length > 1) {
-        if (oldValue != '' &&
-            content.length == 2 &&
-            (content == '""' ||
-                content == '()' ||
-                content == '[]' ||
-                content == '<>' ||
-                content == "{}" ||
-                content == '”“' ||
-                content == '《》' ||
-                content == '（）' ||
-                content == '【】')) {
-          // can not only input content[0], because when input ], [ are also auo insert, which cause ] never be input
-          bind.sessionInputString(sessionId: sessionId, value: content);
-          _openKeyboardUnlocked();
-          return;
-        }
-        bind.sessionInputString(sessionId: sessionId, value: content);
+    if (newFull == oldValue) return;
+
+    // Character-level diff: longest common prefix + longest common suffix.
+    // The middle is the only real change: delete old middle, insert new middle.
+    int prefix = 0;
+    while (prefix < oldValue.length &&
+        prefix < newFull.length &&
+        oldValue[prefix] == newFull[prefix]) {
+      prefix++;
+    }
+    int suffix = 0;
+    while (suffix < oldValue.length - prefix &&
+        suffix < newFull.length - prefix &&
+        oldValue[oldValue.length - 1 - suffix] ==
+            newFull[newFull.length - 1 - suffix]) {
+      suffix++;
+    }
+
+    // Remove the changed middle of the old text (backspaces at caret).
+    final delCount = oldValue.length - prefix - suffix;
+    for (int i = 0; i < delCount; i++) {
+      inputModel.inputKey('VK_BACK');
+    }
+    // Insert the changed middle of the new text as one atomic string.
+    final insert = newFull.substring(prefix, newFull.length - suffix);
+    if (insert.isNotEmpty) {
+      if (insert.length > 1) {
+        bind.sessionInputString(sessionId: sessionId, value: insert);
       } else {
-        inputChar(content);
+        inputChar(insert);
       }
     }
+    _value = newFull;
   }
 
   // handle mobile virtual keyboard
