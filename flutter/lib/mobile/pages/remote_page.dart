@@ -371,66 +371,52 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   void _handleNonIOSSoftKeyboardInput(String newValue) {
-    // ---- AVNC-gesture build: robust text diff (voice + pinyin safe) ----
-    // Design notes:
-    //  * DO NOT consult isComposingRangeValid here. Voice IMEs keep the whole
-    //    dictation marked as "composing" and may never fire a commit event;
-    //    freezing on composing (previous build) swallowed every word.
-    //  * Instead diff the raw text against the shadow value (_value) on every
-    //    change. The '1'*1024 sentinel prefix is identical on both sides, so a
-    //    plain common-prefix scan naturally skips it.
-    //  * New tail is sent in ONE sessionInputString call -> dictation/paste of
-    //    a long paragraph arrives atomically (fast, no per-char round trips).
-    //  * Common-prefix diff also handles equal-length replacement (pinyin "n"
-    //    -> hanzi "你"), which the old length-only branch silently dropped.
+    // Reverted to upstream length-only diff (v7): this is the version the user
+    // confirmed working. The "robust common-prefix diff" (v5) broke normal
+    // typing into remote text fields, so do not reintroduce it here.
+    // AVNC-style composing is handled separately by the local text dialog.
     var oldValue = _value;
     _value = newValue;
     if (oldValue.isNotEmpty &&
         newValue.isNotEmpty &&
         oldValue[0] == '1' &&
         newValue[0] != '1') {
-      // clipboard replaced the whole sentinel string
+      // clipboard
       oldValue = '';
     }
-
-    // Common prefix between old and new text.
-    var common = 0;
-    final maxCommon = oldValue.length < newValue.length
-        ? oldValue.length
-        : newValue.length;
-    while (common < maxCommon && oldValue[common] == newValue[common]) {
-      common++;
-    }
-
-    // Tail that disappeared from the old value -> backspaces.
-    final deleteCount = oldValue.length - common;
-    for (var k = 0; k < deleteCount; ++k) {
-      inputModel.inputKey('VK_BACK');
-    }
-
-    // Tail that appeared in the new value -> type it in one shot.
-    final newStr = newValue.substring(common);
-    if (newStr.length > 1) {
-      if (oldValue != '' &&
-          newStr.length == 2 &&
-          (newStr == '""' ||
-              newStr == '()' ||
-              newStr == '[]' ||
-              newStr == '<>' ||
-              newStr == "{}" ||
-              newStr == '”“' ||
-              newStr == '《》' ||
-              newStr == '（）' ||
-              newStr == '【】')) {
-        bind.sessionInputString(sessionId: sessionId, value: newStr);
-        _openKeyboardUnlocked();
-        return;
+    // This length-only diff assumes the IME appends at the end. If an IME
+    // leaves the caret inside paired punctuation, later insertions can replay
+    // the closing symbol: "()" -> "(a)" sends ")" instead of "a". This is a
+    // client text-diff issue, independent of the host keyboard layout.
+    if (newValue.length == oldValue.length) {
+      // ?
+    } else if (newValue.length < oldValue.length) {
+      final char = 'VK_BACK';
+      inputModel.inputKey(char);
+    } else {
+      final content = newValue.substring(oldValue.length);
+      if (content.length > 1) {
+        if (oldValue != '' &&
+            content.length == 2 &&
+            (content == '""' ||
+                content == '()' ||
+                content == '[]' ||
+                content == '<>' ||
+                content == "{}" ||
+                content == '”“' ||
+                content == '《》' ||
+                content == '（）' ||
+                content == '【】')) {
+          // can not only input content[0], because when input ], [ are also auo insert, which cause ] never be input
+          bind.sessionInputString(sessionId: sessionId, value: content);
+          _openKeyboardUnlocked();
+          return;
+        }
+        bind.sessionInputString(sessionId: sessionId, value: content);
+      } else {
+        inputChar(content);
       }
-      bind.sessionInputString(sessionId: sessionId, value: newStr);
-    } else if (newStr.length == 1) {
-      inputChar(newStr);
     }
-    // ---- end robust text diff ----
   }
 
   // handle mobile virtual keyboard
@@ -505,37 +491,62 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   // This avoids the per-keystroke diff that drops characters with voice/pinyin.
   void _showTextInputDialog() {
     if (gFFI.ffiModel.viewOnly || !gFFI.ffiModel.keyboard) return;
+
+    // The RemotePage keeps a hidden TextFormField (_textController +
+    // _mobileFocusNode) that owns the soft keyboard to drive the remote side.
+    // Two autofocus fields fight for the single Android soft keyboard: text
+    // lands in the hidden field (sent straight to remote) instead of this
+    // dialog. Hide + unfocus it while the dialog is open, then restore it on
+    // close so typing to the remote keeps working afterwards.
+    _timer?.cancel();
+    if (_showEdit) {
+      setState(() => _showEdit = false);
+    }
+    _mobileFocusNode.unfocus();
+
+    void restoreRemoteKeyboard() {
+      _timer?.cancel();
+      _openKeyboardUnlocked();
+    }
+
     final controller = TextEditingController();
     gFFI.dialogManager.show<void>((setState, close, context) {
+      void closeAndRestore() {
+        close();
+        restoreRemoteKeyboard();
+      }
+
       void send() {
         final text = controller.text;
         if (text.isNotEmpty) {
           bind.sessionInputString(sessionId: sessionId, value: text);
         }
-        close();
+        closeAndRestore();
       }
 
       return CustomAlertDialog(
         title: Text(translate('Text input')),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            maxLines: 6,
-            minLines: 3,
-            autocorrect: false,
-            keyboardType: TextInputType.multiline,
-            textInputAction: TextInputAction.newline,
-            decoration: InputDecoration(
-              hintText: translate('Input text to send to remote'),
-              border: const OutlineInputBorder(),
-            ),
+        // Keep the dialog box hugging the text field: compact content padding
+        // and a bounded width instead of stretching to double.maxFinite.
+        contentPadding: 12,
+        contentBoxConstraints: const BoxConstraints(maxWidth: 400),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 6,
+          minLines: 3,
+          autocorrect: false,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          decoration: InputDecoration(
+            hintText: translate('Input text to send to remote'),
+            border: const OutlineInputBorder(),
+            isDense: true,
           ),
         ),
         actions: [
           dialogButton("Cancel", icon: const Icon(Icons.close_rounded),
-              onPressed: close, isOutline: true),
+              onPressed: closeAndRestore, isOutline: true),
           dialogButton("Send", icon: const Icon(Icons.send_rounded),
               onPressed: send),
         ],
