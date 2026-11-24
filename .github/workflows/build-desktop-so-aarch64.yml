@@ -1,0 +1,118 @@
+name: Build RustDesk desktop librustdesk.so (aarch64, CJK clipboard fix)
+
+# 精简版 Linux aarch64 编译：只要 librustdesk.so（含 process_seq 的 X11 中文
+# 整段粘贴修复），跳过 Flutter/deb/AppImage 打包。
+# 关键：照官方 flutter-build.yml 用 ubuntu18.04 容器编（glibc 2.27），
+#       保证 so 能在 glibc 2.31 的麒麟系统上加载（ubuntu22.04 直编会要 GLIBC_2.34）。
+# 触发：workflow_dispatch 手动。产物：librustdesk-aarch64.so
+
+on:
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: "1.75"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  TARGET: aarch64-unknown-linux-gnu
+
+jobs:
+  build-so:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: Checkout source (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install Rust toolchain (host, for codegen)
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: "rustfmt"
+
+      # bridge_generated.rs 是 src/lib.rs 无条件 mod 的，必须先生成。
+      - name: Install bridge codegen tool
+        run: |
+          cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid" --locked
+
+      - name: Generate bridge code
+        run: |
+          flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+          ls -l ./src/bridge_generated.rs ./src/bridge_generated.io.rs
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install CMake for vcpkg (ARM64 runner cmake 3.31 too old for vcpkg 2026.07)
+        run: |
+          python3 -m pip install --user "cmake==4.3.0"
+          user_base="$(python3 -m site --user-base)"
+          "${user_base}/bin/cmake" --version
+          echo "${user_base}/bin" >> "${GITHUB_PATH}"
+
+      - name: Install vcpkg dependencies (arm64-linux)
+        run: |
+          $VCPKG_ROOT/vcpkg install --triplet arm64-linux --x-install-root="$VCPKG_ROOT/installed"
+        shell: bash
+
+      # 用 ubuntu18.04 arm 容器编，产出 glibc<=2.27 的 so（本机麒麟 glibc 2.31 可加载）。
+      - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8
+        name: Build librustdesk.so in ubuntu18.04 arm container
+        id: build
+        with:
+          arch: aarch64
+          distro: ubuntu18.04
+          githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --volume "${PWD}:/workspace"
+            --volume "/opt/artifacts:/opt/artifacts"
+          shell: /bin/bash
+          install: |
+            apt-get update -y
+            apt-get install -y \
+               build-essential clang cmake curl gcc git g++ \
+               libayatana-appindicator3-dev libasound2-dev libclang-10-dev \
+               libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-3-dev \
+               libpulse-dev libva-dev libxcb-randr0-dev libxcb-shape0-dev \
+               libxcb-xfixes0-dev libxdo-dev libxfixes-dev llvm-10-dev \
+               nasm ninja-build pkg-config python3 unzip wget xz-utils libssl-dev
+          run: |
+            set -e
+            cd /workspace
+            export VCPKG_ROOT=/opt/artifacts/vcpkg
+
+            # 容器里装匹配 target 的 rust 1.75（aarch64-unknown-linux-gnu）
+            wget -q https://static.rust-lang.org/dist/rust-1.75.0-aarch64-unknown-linux-gnu.tar.gz -O rust.tar.gz
+            tar -zxvf rust.tar.gz > /dev/null && rm rust.tar.gz
+            cd rust-1.75.0-aarch64-unknown-linux-gnu && ./install.sh --prefix=/usr/local > /dev/null
+            cd /workspace
+            export PATH=/usr/local/bin:$PATH
+            rustc --version && cargo --version
+
+            # 只编 cdylib，跳过 staticlib/rlib 省时间
+            sed -i 's/\["cdylib", "staticlib", "rlib"\]/\["cdylib"\]/g' Cargo.toml
+
+            cargo build --locked --lib --jobs 3 --features hwcodec,flutter,unix-file-copy-paste --release
+            ls -lh ./target/release/librustdesk.so
+
+      - name: Upload librustdesk.so
+        uses: actions/upload-artifact@v4
+        with:
+          name: librustdesk-aarch64
+          path: target/release/librustdesk.so
+          retention-days: 30
