@@ -354,7 +354,10 @@ class FloatingWindowService : Service(), View.OnTouchListener {
     }
 
     private fun syncClipboard() {
-        MainActivity.rdClipboardManager?.syncClipboard(false)
+        // v9: this button is used while the phone is the controller (client),
+        // so the local clipboard must go to CLIPBOARDS_CLIENT, not HOST.
+        // Passing false put it in the host queue that nobody consumes here.
+        MainActivity.rdClipboardManager?.syncClipboard(true)
     }
 
     private fun stopMainService() {

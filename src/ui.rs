@@ -183,6 +183,15 @@ pub fn start(args: &mut [String]) {
             .unwrap_or("".to_owned()),
         page
     ));
+    // v9 ghost-window fix: on Linux the connection-manager window is only an
+    // IPC endpoint (start_ipc talks to it over the "_cm" socket). It has no UI
+    // the user interacts with, yet every connection spawns one and each one
+    // registers a taskbar icon that outlives the session. Hide it by default
+    // on Linux so no ghost icons accumulate; keep the config opt-in on other
+    // platforms to preserve upstream behavior there.
+    #[cfg(target_os = "linux")]
+    let hide_cm = true;
+    #[cfg(not(target_os = "linux"))]
     let hide_cm = *cm::HIDE_CM.lock().unwrap();
     if !args.is_empty() && args[0] == "--cm" && hide_cm {
         // run_app calls expand(show) + run_loop, we use collapse(hide) + run_loop instead to create a hidden window

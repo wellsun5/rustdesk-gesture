@@ -1915,17 +1915,25 @@ fn process_unicode(en: &mut Enigo, chr: u32) {
 }
 
 fn process_seq(en: &mut Enigo, sequence: &str) {
-    // On Wayland with uinput mode:
-    // - pure ASCII printable sequence: input via key sequence (custom keyboard path)
-    // - any non-ASCII present: input whole sequence via clipboard to preserve order
+    // v9 CJK fix: route non-ASCII sequences through clipboard + paste on BOTH
+    // Wayland and X11. X11's tfc dynamic keymap maps each CJK char to a fake
+    // keycode; bursts (voice IME / paste) overflow or reorder those keycodes,
+    // which is exactly the "drop chars / reordered / triggered IME" symptom.
+    // Pure ASCII still uses the fast key_sequence path (no clipboard churn).
+    // Shift+Insert works on X11 too, so the existing helper is reused as-is.
     #[cfg(target_os = "linux")]
-    if !crate::platform::linux::is_x11() && wayland_use_uinput() {
-        if sequence.chars().all(is_ascii_printable) {
-            en.key_sequence(sequence);
+    {
+        let use_clipboard = if crate::platform::linux::is_x11() {
+            // X11: send non-ASCII as one clipboard paste; ASCII stays as keys.
+            !sequence.chars().all(is_ascii_printable)
         } else {
+            // Wayland: keep the original uinput-gated behaviour.
+            wayland_use_uinput() && !sequence.chars().all(is_ascii_printable)
+        };
+        if use_clipboard {
             input_text_via_clipboard_server(en, sequence);
+            return;
         }
-        return;
     }
 
     en.key_sequence(&sequence);

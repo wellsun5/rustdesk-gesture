@@ -91,11 +91,27 @@ static void on_subwindow_created(FlPluginRegistry* registry) {
 #if defined(GDK_WINDOWING_WAYLAND) && defined(HAS_KEYBOARD_SHORTCUTS_INHIBIT)
   wayland_shortcuts_inhibit_init_for_subwindow(registry);
 #endif
+  // Ghost window fix: sub-windows are managed through the main window's tab
+  // bar and must never own an independent taskbar icon. The plugin's
+  // FlutterWindow constructor briefly gtk_widget_show()s each new window
+  // before hiding it; on UKUI (Kylin) that transient map is enough to register
+  // a taskbar icon which survives the subsequent hide(). Mark every subwindow
+  // as skip-taskbar as soon as it is created so no icon is ever registered.
+  // Do this before any early return so it always runs.
+  if (registry != NULL) {
+    GtkWidget* widget = GTK_IS_WIDGET(registry) ? GTK_WIDGET(registry) : NULL;
+    GtkWidget* win = widget != NULL ? gtk_widget_get_toplevel(widget) : NULL;
+    if (win != NULL && GTK_IS_WINDOW(win)) {
+      gtk_window_set_skip_taskbar_hint(GTK_WINDOW(win), TRUE);
+    }
+  }
   // Set up side button forwarding for sub-windows.
   if (registry == NULL || !FL_IS_VIEW(registry)) return;
   FlView* view = FL_VIEW(registry);
   GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(view));
   if (toplevel != NULL && GTK_IS_WINDOW(toplevel)) {
+    // Re-assert on the resolved toplevel (covers the FL_IS_VIEW path).
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(toplevel), TRUE);
     FlMethodChannel* channel = side_buttons_create_channel(fl_view_get_engine(view));
     if (channel == NULL) return;
     side_buttons_init_for_window(GTK_WINDOW(toplevel), channel);
