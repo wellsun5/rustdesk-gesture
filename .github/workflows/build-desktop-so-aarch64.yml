@@ -103,6 +103,16 @@ jobs:
           "${user_base}/bin/cmake" --version
           echo "${user_base}/bin" >> "${GITHUB_PATH}"
 
+      # vcpkg 装在 host runner 上跑（下面的 ubuntu18.04 容器只负责 rust 编译），
+      # aom/libvpx/ffmpeg/libyuv 的 portfile 都会调 nasm；host 默认没装，
+      # 第 3/14 个包 aom 就 "Could not find nasm" 挂掉。这里一次性补齐 host 构建工具。
+      - name: Install host build tools for vcpkg (nasm etc.)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y nasm yasm perl build-essential pkg-config \
+            autoconf automake libtool python3 unzip zip curl wget
+          nasm -v && perl -v | head -2
+
       - name: Install vcpkg dependencies (arm64-linux)
         run: |
           $VCPKG_ROOT/vcpkg install --triplet arm64-linux --x-install-root="$VCPKG_ROOT/installed"
