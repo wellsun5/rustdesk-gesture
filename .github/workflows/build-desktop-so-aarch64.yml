@@ -156,6 +156,11 @@ jobs:
             sed -i 's/\["cdylib", "staticlib", "rlib"\]/\["cdylib"\]/g' Cargo.toml
 
             cargo build --locked --lib --jobs 3 --features hwcodec,flutter,unix-file-copy-paste --release
+            # Cargo.toml [lib] name = "librustdesk"，产物实际叫 liblibrustdesk.so
+            # （lib 前缀 + name + .so），重命名为 launcher 期望的 librustdesk.so。
+            echo "=== 编译产物 ==="
+            ls -lh ./target/release/liblibrustdesk.so
+            mv ./target/release/liblibrustdesk.so ./target/release/librustdesk.so
             ls -lh ./target/release/librustdesk.so
 
       - name: Upload librustdesk.so
