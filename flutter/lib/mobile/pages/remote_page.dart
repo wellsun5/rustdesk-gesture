@@ -374,7 +374,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     // Reverted to upstream length-only diff (v7): this is the version the user
     // confirmed working. The "robust common-prefix diff" (v5) broke normal
     // typing into remote text fields, so do not reintroduce it here.
-    // AVNC-style composing is handled separately by the local text dialog.
     var oldValue = _value;
     _value = newValue;
     if (oldValue.isNotEmpty &&
@@ -483,74 +482,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             overlays: SystemUiOverlay.values);
         _mobileFocusNode.requestFocus();
       });
-    });
-  }
-
-  // AVNC-style text input: type locally in a visible field (so the IME can
-  // freely compose/pick candidates), then send the whole text in one shot.
-  // This avoids the per-keystroke diff that drops characters with voice/pinyin.
-  void _showTextInputDialog() {
-    if (gFFI.ffiModel.viewOnly || !gFFI.ffiModel.keyboard) return;
-
-    // The RemotePage keeps a hidden TextFormField (_textController +
-    // _mobileFocusNode) that owns the soft keyboard to drive the remote side.
-    // Two autofocus fields fight for the single Android soft keyboard: text
-    // lands in the hidden field (sent straight to remote) instead of this
-    // dialog. Hide + unfocus it while the dialog is open, then restore it on
-    // close so typing to the remote keeps working afterwards.
-    _timer?.cancel();
-    if (_showEdit) {
-      setState(() => _showEdit = false);
-    }
-    _mobileFocusNode.unfocus();
-
-    void restoreRemoteKeyboard() {
-      _timer?.cancel();
-      _openKeyboardUnlocked();
-    }
-
-    final controller = TextEditingController();
-    gFFI.dialogManager.show<void>((setState, close, context) {
-      void closeAndRestore() {
-        close();
-        restoreRemoteKeyboard();
-      }
-
-      void send() {
-        final text = controller.text;
-        if (text.isNotEmpty) {
-          bind.sessionInputString(sessionId: sessionId, value: text);
-        }
-        closeAndRestore();
-      }
-
-      return CustomAlertDialog(
-        title: Text(translate('Text input')),
-        // Keep the dialog box hugging the text field: compact content padding
-        // and a bounded width instead of stretching to double.maxFinite.
-        contentPadding: 12,
-        contentBoxConstraints: const BoxConstraints(maxWidth: 400),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 6,
-          minLines: 3,
-          autocorrect: false,
-          keyboardType: TextInputType.multiline,
-          textInputAction: TextInputAction.newline,
-          decoration: InputDecoration(
-            hintText: translate('Input text to send to remote'),
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        actions: [
-          dialogButton("Cancel", icon: const Icon(Icons.close_rounded),
-              onPressed: closeAndRestore, isOutline: true),
-          dialogButton("Send", icon: const Icon(Icons.send_rounded),
-              onPressed: send),
-        ],
-      );
     });
   }
 
@@ -710,11 +641,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                   icon: Icon(Icons.keyboard),
                                   onPressed: openKeyboard),
                               IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.text_fields),
-                                  tooltip: translate('Text input'),
-                                  onPressed: _showTextInputDialog),
-                              IconButton(
                                 color: Colors.white,
                                 icon: const Icon(Icons.build),
                                 onPressed: () => gFFI.dialogManager
@@ -726,11 +652,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                   color: Colors.white,
                                   icon: Icon(Icons.keyboard),
                                   onPressed: openKeyboard),
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.text_fields),
-                                  tooltip: translate('Text input'),
-                                  onPressed: _showTextInputDialog),
                               IconButton(
                                 color: Colors.white,
                                 icon: Icon(gFFI.ffiModel.touchMode
