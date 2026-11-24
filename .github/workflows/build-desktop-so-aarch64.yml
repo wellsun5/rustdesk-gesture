@@ -76,11 +76,18 @@ jobs:
 
       - name: Generate bridge code
         run: |
+          # codegen 先写 bridge_generated.rs（Rust code phase），再生成 dart。
+          # arm64 runner 无 libclang，dart wire 那步会 sanity_check 失败，但 .rs
+          # 已落盘。我们用 || true 忽略 dart 阶段失败，只要 .rs 生成成功即可编 so。
           ~/.cargo/bin/flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart \
-            --c-output ./flutter/macos/Runner/bridge_generated.h
+            --c-output ./flutter/macos/Runner/bridge_generated.h \
+            || echo "codegen dart phase failed (expected on arm64 without libclang); rust .rs should be generated"
+          echo "=== 检查 bridge_generated.rs ==="
           ls -l ./src/bridge_generated.rs ./src/bridge_generated.io.rs
+          test -s ./src/bridge_generated.rs || { echo "ERROR: bridge_generated.rs 未生成"; exit 1; }
+          echo "bridge_generated.rs 已就绪"
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
