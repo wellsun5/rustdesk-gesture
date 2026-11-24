@@ -40,17 +40,33 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "rustfmt"
 
-      # codegen 工具内部硬编码调用 `flutter --version` 探测工具链（即使
-      # --no-build-runner 也躲不过），所以照搬 Android workflow 装 Flutter。
-      - name: Setup Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          channel: "stable"
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Flutter pub get
-        run: cd flutter && flutter pub get
+      # codegen 工具外部只依赖两个命令：flutter --version（探测工具链，
+      # 因 pubspec.lock 含 flutter 包）和 dart format（格式化生成的 dart）。
+      # 我们只要 bridge_generated.rs 编 so，不需要真的 Flutter/Dart SDK
+      # （官方也没有 arm64 Linux 的 Flutter release）。用 stub 骗过这两个检查：
+      #   --version 返回 0 + 一段版本号；format 原样放行返回 0。
+      - name: Stub flutter/dart for codegen
+        run: |
+          mkdir -p /tmp/frb-stub
+          cat > /tmp/frb-stub/flutter <<'STUB'
+          #!/bin/sh
+          echo "Flutter 3.24.5 • channel stable • https://github.com/flutter/flutter.git"
+          echo "Framework • revision 9f1a11ebc5 (1 year ago) • 2024-09-18"
+          echo "Engine • revision 1b9f3f0f4f"
+          echo "Tools • Dart 3.5.4"
+          STUB
+          cat > /tmp/frb-stub/dart <<'STUB'
+          #!/bin/sh
+          case "$1" in
+            --version) echo "Dart SDK version: 3.5.4 (stable)";;
+            format) shift; echo "(stub dart format) $@";;
+          esac
+          exit 0
+          STUB
+          chmod +x /tmp/frb-stub/flutter /tmp/frb-stub/dart
+          echo "/tmp/frb-stub" >> "$GITHUB_PATH"
+          export PATH=/tmp/frb-stub:$PATH
+          flutter --version | head -1 && dart --version
 
       # bridge_generated.rs 是 src/lib.rs 无条件 mod 的，必须先生成。
       - name: Install bridge codegen tool
