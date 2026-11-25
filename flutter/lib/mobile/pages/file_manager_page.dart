@@ -403,43 +403,9 @@ class _FileManagerPageState extends State<FileManagerPage> {
                 icon: Icon(Icons.more_vert),
                 itemBuilder: (context) {
                   return [
-                    if (isAndroid && showLocal) ...[
-                      // v12: 一键开启"所有文件访问权限", 让本地目录像电脑一样进所有文件夹
-                      PopupMenuItem(
-                        value: 'all_files_access',
-                        child: Row(
-                          children: [
-                            Icon(Icons.folder_shared_outlined,
-                                color: Theme.of(context).iconTheme.color),
-                            SizedBox(width: 5),
-                            Text('开启全盘访问'),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'workspace',
-                        child: Row(
-                          children: [
-                            Icon(Icons.storage_outlined,
-                                color: Theme.of(context).iconTheme.color),
-                            SizedBox(width: 5),
-                            Text(translate('RustDesk storage')),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'choose_folder',
-                        child: Row(
-                          children: [
-                            Icon(Icons.folder_open_outlined,
-                                color: Theme.of(context).iconTheme.color),
-                            SizedBox(width: 5),
-                            Text('${translate('Other folders')}…'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuDivider(),
-                    ],
+                    // v13: 删掉 workspace / 其他文件夹 / 开启全盘访问 三个切换项。
+                    // 全盘访问已在启动时自动检测授权并把 home 设为存储根,
+                    // 顶部已有 家目录/返回/父目录 按钮, 无需再切换存储位置。
                     PopupMenuItem(
                       child: Row(
                         children: [
@@ -532,11 +498,8 @@ class _FileManagerPageState extends State<FileManagerPage> {
                   ];
                 },
                 onSelected: (v) {
-                  if (v == 'all_files_access') {
-                    _requestAllFilesAccess();
-                  } else if (v == 'workspace' || v == 'choose_folder') {
-                    _changeLocalStorage(workspace: v == 'workspace');
-                  } else if (v == "refresh") {
+                  // v13: all_files_access / workspace / choose_folder 分支已移除
+                  if (v == "refresh") {
                     currentFileController.refresh();
                   } else if (v == "import") {
                     _importFiles();
@@ -1081,20 +1044,23 @@ class BottomSheetBody extends StatelessWidget {
   BottomSheet build(BuildContext context) {
     // ignore: no_leading_underscores_for_local_identifiers
     final _actions = actions ?? [];
-    // v12: 系统三键导航/手势条会压住底部操作栏, 预留底部安全区,
-    // 并把操作栏整体抬高, 保证按钮可点。
+    // v13: 系统三键导航(返回/Home/多任务)会压住底部操作栏。
+    // 用外层 Padding 把整个 65 高的操作条顶离导航栏 —— 按钮落在安全区上方。
+    // (v12 的写法 height:65+bottomSafe + Alignment.centerLeft + padding bottom
+    //  会被垂直居中相互抵消, 等于没垫高, 已废弃。)
     final bottomSafe = MediaQuery.of(context).viewPadding.bottom;
     return BottomSheet(
       builder: (BuildContext context) {
-        return Container(
-            height: 65 + bottomSafe,
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottomSafe),
+          child: Container(
+            height: 65,
             alignment: Alignment.centerLeft,
             decoration: BoxDecoration(
                 color: MyTheme.accent50,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(10))),
             child: Padding(
-              padding:
-                  EdgeInsets.only(left: 15, right: 15, bottom: bottomSafe),
+              padding: EdgeInsets.symmetric(horizontal: 15),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -1122,7 +1088,9 @@ class BottomSheetBody extends StatelessWidget {
                   }())
                 ],
               ),
-            ));
+            ),
+          ),
+        );
       },
       onClosing: () {},
       // backgroundColor: MyTheme.grayBg,
