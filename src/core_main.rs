@@ -699,6 +699,17 @@ pub fn core_main() -> Option<CoreMainAction> {
             }
             return None;
         } else if args[0] == "--cm" {
+            // v11: headless CM mode for hosts where the CM Flutter window cannot
+            // render (GL/Atk crash). Runs the pure-Rust file-transfer IPC with no
+            // window and no taskbar icon. Triggered by RUSTDESK_CM_HEADLESS=1,
+            // inherited from the systemd --server process.
+            #[cfg(target_os = "linux")]
+            if std::env::var("RUSTDESK_CM_HEADLESS").as_deref() == Ok("1") {
+                crate::ui_interface::start_option_status_sync();
+                crate::ui_cm_interface::start_cm_headless();
+                // Keep this process alive running the IPC listener threads.
+                loop { std::thread::sleep(std::time::Duration::from_secs(3600)); }
+            }
             // call connection manager to establish connections
             // meanwhile, return true to call flutter window to show control panel
             crate::ui_interface::start_option_status_sync();
