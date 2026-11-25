@@ -2912,11 +2912,12 @@ impl Connection {
         // try_start_cm() only suppressed the Login message; the IPC bridge
         // still ran and re-spawned --cm on every incoming connection. Opt out
         // here so the bridge is never started and no --cm process is created.
-        #[cfg(target_os = "linux")]
-        if std::env::var("RUSTDESK_NO_CM_WINDOW").as_deref() == Ok("1") {
-            let _ = self.start_cm_ipc_para.take();
-            return;
-        }
+        // v10c: NO_CM_WINDOW must NOT suppress the IPC bridge here. The bridge
+        // is what spawns `rustdesk --cm`, and `--cm` is not only the taskbar
+        // control-panel window -- it is also the file-transfer directory reader
+        // (Connection::read_dir -> send_fs -> send_to_cm). Suppressing it made
+        // the remote file pane permanently empty. The window is now hidden at
+        // the Dart layer via cmGetConfig("hide_cm") instead (see src/ipc.rs).
         if let Some(p) = self.start_cm_ipc_para.take() {
             tokio::spawn(async move {
                 #[cfg(windows)]
