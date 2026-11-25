@@ -1034,7 +1034,9 @@ class KeyHelpTools extends StatefulWidget {
 }
 
 class _KeyHelpToolsState extends State<KeyHelpTools> {
-  var _more = true;
+  // v10: collapsed by default - only the first row (modifiers + Fn/pin/...)
+  // shows; tap "..." to expand the full special-key row.
+  var _more = false;
   var _fn = false;
   var _pin = false;
   final _keyboardVisibilityController = KeyboardVisibilityController();
@@ -1406,7 +1408,22 @@ void showOptions(
         (imageQualityRadios.isNotEmpty ? imageQualityRadios[0].groupValue : '')
             .obs;
     var codec = (codecRadios.isNotEmpty ? codecRadios[0].groupValue : '').obs;
+    // v10: show codec/chroma at the very top of this (screen icon) menu.
+    final qmData = gFFI.qualityMonitorModel.data;
+    final codecChromaInfo = Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Codec: ${qmData.codecFormat ?? '-'}',
+              style: const TextStyle(color: Color.fromARGB(255, 128, 128, 128), fontSize: 12)),
+          Text('Chroma: ${qmData.chroma ?? '-'}',
+              style: const TextStyle(color: Color.fromARGB(255, 128, 128, 128), fontSize: 12)),
+        ],
+      ),
+    );
     final radios = [
+      codecChromaInfo,
       for (var e in viewStyleRadios)
         Obx(() => getRadio<String>(
             e.child,
