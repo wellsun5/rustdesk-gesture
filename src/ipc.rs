@@ -998,12 +998,25 @@ async fn handle(data: Data, stream: &mut Connection) {
                         None
                     };
                 } else if name == "hide_cm" {
-                    value = if crate::hbbs_http::sync::is_pro() || crate::common::is_custom_client()
+                    // v10c (Kylin UKUI host-only): force the CM (connection
+                    // manager) control-panel window to stay hidden on Linux.
+                    // --cm must still run (it reads dirs for file transfer), but
+                    // its Flutter window + dock icon are the taskbar logo the
+                    // user wants gone. hide_cm=true makes main.dart call
+                    // hideCmWindow() (opacity 0 + hide + mainHideDock).
+                    #[cfg(target_os = "linux")]
                     {
-                        Some(hbb_common::password_security::hide_cm().to_string())
-                    } else {
-                        None
-                    };
+                        value = Some("true".to_string());
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        value = if crate::hbbs_http::sync::is_pro() || crate::common::is_custom_client()
+                        {
+                            Some(hbb_common::password_security::hide_cm().to_string())
+                        } else {
+                            None
+                        };
+                    }
                 } else if name == "voice-call-input" {
                     value = crate::audio_service::get_voice_call_input_device();
                 } else if name == "unlock-pin" {
