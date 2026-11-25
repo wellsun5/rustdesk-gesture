@@ -2408,6 +2408,17 @@ impl Connection {
     }
 
     fn try_start_cm(&mut self, peer_id: String, name: String, authorized: bool) {
+        // v10 (Kylin UKUI host-only): this machine is a pure controlled
+        // endpoint. The connection-manager GUI ("--cm") is only meaningful for
+        // an operator driving outbound connections; on UKUI it registers a
+        // stubborn taskbar icon per connection. When opted out, skip spawning
+        // it entirely at the source so neither the process nor its window icon
+        // ever appears. The screen/input service lives in --server and is
+        // unaffected.
+        #[cfg(target_os = "linux")]
+        if std::env::var("RUSTDESK_NO_CM_WINDOW").as_deref() == Ok("1") {
+            return;
+        }
         self.send_to_cm(ipc::Data::Login {
             id: self.inner.id(),
             is_file_transfer: self.file_transfer.is_some(),
