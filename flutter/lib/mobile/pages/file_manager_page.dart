@@ -1044,11 +1044,13 @@ class BottomSheetBody extends StatelessWidget {
   BottomSheet build(BuildContext context) {
     // ignore: no_leading_underscores_for_local_identifiers
     final _actions = actions ?? [];
-    // v13: 系统三键导航(返回/Home/多任务)会压住底部操作栏。
-    // 用外层 Padding 把整个 65 高的操作条顶离导航栏 —— 按钮落在安全区上方。
-    // (v12 的写法 height:65+bottomSafe + Alignment.centerLeft + padding bottom
-    //  会被垂直居中相互抵消, 等于没垫高, 已废弃。)
-    final bottomSafe = MediaQuery.of(context).viewPadding.bottom;
+    // v14: 底部操作条只在多选模式出现, 系统三键导航(返回/Home/多任务)会压住它。
+    // 关键: 在 Scaffold.bottomSheet 的 context 里 MediaQuery.viewPadding.bottom
+    // 常返回 0 (系统导航栏画在 Flutter window 之外) -> 垫 0 等于没垫, 这是
+    // v12/v13 两次失效的真正原因。改用 max(系统值, 56) 兜底, 保证至少抬高
+    // 一个标准三键导航条高度(48)+余量, 按钮落在导航键上方。
+    final sysSafe = MediaQuery.of(context).viewPadding.bottom;
+    final bottomSafe = sysSafe > 56.0 ? sysSafe : 56.0;
     return BottomSheet(
       builder: (BuildContext context) {
         return Padding(
