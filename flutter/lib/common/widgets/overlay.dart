@@ -568,14 +568,14 @@ class QualityMonitor extends StatelessWidget {
         Expanded(
             flex: 8,
             child: AutoSizeText(info,
-                style: TextStyle(color: Color.fromARGB(255, 210, 210, 210)),
+                style: TextStyle(color: Color.fromARGB(255, 128, 128, 128)),
                 textAlign: TextAlign.right,
                 maxLines: 1)),
         Spacer(flex: 1),
         Expanded(
             flex: 8,
             child: AutoSizeText(value ?? '',
-                style: TextStyle(color: rightColor ?? Colors.white),
+                style: TextStyle(color: Color.fromARGB(255, 128, 128, 128)),
                 maxLines: 1)),
       ],
     );
@@ -590,7 +590,7 @@ class QualityMonitor extends StatelessWidget {
               ? Container(
                   constraints: BoxConstraints(maxWidth: 200),
                   padding: const EdgeInsets.all(8),
-                  color: MyTheme.canvasColor.withAlpha(150),
+                  color: Colors.transparent,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -599,13 +599,10 @@ class QualityMonitor extends StatelessWidget {
                       // let delay be 0 if fps is 0
                       _row(
                           "Delay",
-                          "${qualityMonitorModel.data.delay == null ? '-' : (qualityMonitorModel.data.fps ?? "").replaceAll(' ', '').replaceAll('0', '').isEmpty ? 0 : qualityMonitorModel.data.delay}ms",
-                          rightColor: Colors.green),
+                          "${qualityMonitorModel.data.delay == null ? '-' : (qualityMonitorModel.data.fps ?? "").replaceAll(' ', '').replaceAll('0', '').isEmpty ? 0 : qualityMonitorModel.data.delay}ms"),
                       _row("Target Bitrate",
                           "${qualityMonitorModel.data.targetBitrate ?? '-'}kb"),
-                      _row(
-                          "Codec", qualityMonitorModel.data.codecFormat ?? '-'),
-                      _row("Chroma", qualityMonitorModel.data.chroma ?? '-'),
+                      // v10: Codec/Chroma moved to the display-options (screen icon) menu top.
                       if (qualityMonitorModel.webrtcTransport != null)
                         _row("Transport",
                             qualityMonitorModel.webrtcTransport!),
