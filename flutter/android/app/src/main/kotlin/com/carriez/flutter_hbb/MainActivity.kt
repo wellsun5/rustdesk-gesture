@@ -17,7 +17,9 @@ import android.content.ServiceConnection
 import android.content.ClipboardManager
 import android.os.Bundle
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
+import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -323,6 +325,33 @@ class MainActivity : FlutterActivity() {
                     } else {
                         result.success(false)
                     }
+                }
+                // v12: 全盘文件访问权限(Android 11+ "所有文件访问权限")
+                "check_all_files_access" -> {
+                    val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        Environment.isExternalStorageManager()
+                    } else {
+                        XXPermissions.isGranted(context, "android.permission.WRITE_EXTERNAL_STORAGE")
+                    }
+                    result.success(granted)
+                }
+                // v12: 跳转到系统设置页开启; 用 transparent activity 承接 onActivityResult 回跳
+                "request_all_files_access" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        try {
+                            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                            intent.data = Uri.parse("package:$packageName")
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                        }
+                    } else {
+                        requestPermission(context, "android.permission.WRITE_EXTERNAL_STORAGE")
+                    }
+                    result.success(true)
                 }
                 "request_permission" -> {
                     if (call.arguments is String) {

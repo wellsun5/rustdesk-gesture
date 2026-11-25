@@ -173,10 +173,24 @@ class PlatformFFI {
       _startListenEvent(_ffiBind); // global event
       try {
         if (isAndroid) {
-          // Android file transfer uses app-specific storage. User-selected
-          // files enter and leave this workspace through the system picker.
-          _homeDir = (await getExternalStorageDirectory())?.path ??
-              (await getApplicationSupportDirectory()).path;
+          // v12: 拿到"所有文件访问权限"后, 把文件传输根目录指向内部存储根,
+          // 这样手机本地目录能像电脑一样进入所有子目录(DCIM/Download/视频等)。
+          // 未授权时退回 app 私有目录, 靠系统文件选择器导入导出。
+          bool allFilesAccess = false;
+          try {
+            allFilesAccess = await _toAndroidChannel
+                    .invokeMethod<bool>('check_all_files_access') ??
+                false;
+          } catch (e) {
+            debugPrint('check_all_files_access failed: $e');
+          }
+          debugPrint('v12 allFilesAccess=$allFilesAccess');
+          if (allFilesAccess) {
+            _homeDir = '/storage/emulated/0';
+          } else {
+            _homeDir = (await getExternalStorageDirectory())?.path ??
+                (await getApplicationSupportDirectory()).path;
+          }
         } else if (isIOS) {
           // The previous code was `_homeDir = (await getDownloadsDirectory())?.path ?? '';`,
           // which provided the `downloads` path in the sandbox.

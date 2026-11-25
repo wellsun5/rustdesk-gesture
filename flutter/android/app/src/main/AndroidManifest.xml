@@ -3,9 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.carriez.flutter_hbb">
 
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:node="remove" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
+    <!-- v12: 恢复存储权限, 本地文件传输可浏览整个内部存储(像电脑那样所有目录都能进) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />

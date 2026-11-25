@@ -413,6 +413,9 @@ class FileController {
 
   Future<void> _restoreWorkspaceHome(String savedDir) async {
     if (savedDir.isEmpty || AndroidDocuments.isPath(savedDir)) return;
+    // v12: 全盘访问模式下 home 是内部存储根, 不要按 workspace 回退,
+    // 否则又被锁死在 app 私有目录, 无法像电脑一样浏览所有目录。
+    if (PathUtil.posixContext.equals(homePath, '/storage/emulated/0')) return;
     final workspace = await AndroidDocuments.workspace();
     if (PathUtil.posixContext.equals(workspace, savedDir) ||
         PathUtil.posixContext.isWithin(workspace, savedDir)) {

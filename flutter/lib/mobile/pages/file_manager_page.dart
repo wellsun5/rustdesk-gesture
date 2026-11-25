@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_breadcrumb/flutter_breadcrumb.dart';
 import 'package:flutter_hbb/models/file_model.dart';
+import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
 import 'package:toggle_switch/toggle_switch.dart';
 
@@ -165,6 +166,59 @@ class _FileManagerPageState extends State<FileManagerPage> {
       }
     } catch (error) {
       showToast(error.toString());
+    }
+  }
+
+  // v12: 引导开启 Android"所有文件访问权限", 授权后把本地根目录切到内部存储根
+  Future<void> _requestAllFilesAccess() async {
+    try {
+      final already =
+          await gFFI.invokeMethodWithResult<bool>('check_all_files_access') ??
+              false;
+      if (already) {
+        // 已授权, 直接切换 home 到内部存储根
+        await bind.mainSetHomeDir(home: '/storage/emulated/0');
+        model.localController.homePath = '/storage/emulated/0';
+        if (await model.localController.openDirectory('/storage/emulated/0',
+            isBack: true)) {
+          model.localController.history.clear();
+        }
+        showToast(translate('Successful'));
+        setState(() {});
+        return;
+      }
+      final ok = await gFFI.dialogManager.show<bool>(
+        (_, close, __) => CustomAlertDialog(
+          title: const Text('开启全盘访问'),
+          content: const Text(
+              '开启后，手机本地文件传输可像电脑一样进入所有文件夹（相册、下载、视频等）。\n\n系统会跳转到设置页，请为 RustDesk 打开"允许访问所有文件"，返回后即可生效。'),
+          actions: [
+            dialogButton('Cancel', onPressed: () => close(false), isOutline: true),
+            dialogButton('OK', onPressed: () => close(true)),
+          ],
+          onCancel: () => close(false),
+        ),
+        forceGlobal: true,
+      );
+      if (ok != true) return;
+      await gFFI.invokeMethod('request_all_files_access');
+      // 系统设置是独立 activity, 返回后需重新进入文件传输页触发 onReady。
+      // 这里主动尝试切换一次, 失败也无妨(下次进页面会自动按权限设置 home)。
+      await Future.delayed(Duration(milliseconds: 800));
+      final granted =
+          await gFFI.invokeMethodWithResult<bool>('check_all_files_access') ??
+              false;
+      if (granted && mounted) {
+        await bind.mainSetHomeDir(home: '/storage/emulated/0');
+        model.localController.homePath = '/storage/emulated/0';
+        if (await model.localController.openDirectory('/storage/emulated/0',
+            isBack: true)) {
+          model.localController.history.clear();
+        }
+        setState(() {});
+      }
+    } catch (e) {
+      showToast(e.toString());
     }
   }
 
@@ -350,6 +404,18 @@ class _FileManagerPageState extends State<FileManagerPage> {
                 itemBuilder: (context) {
                   return [
                     if (isAndroid && showLocal) ...[
+                      // v12: 一键开启"所有文件访问权限", 让本地目录像电脑一样进所有文件夹
+                      PopupMenuItem(
+                        value: 'all_files_access',
+                        child: Row(
+                          children: [
+                            Icon(Icons.folder_shared_outlined,
+                                color: Theme.of(context).iconTheme.color),
+                            SizedBox(width: 5),
+                            Text('开启全盘访问'),
+                          ],
+                        ),
+                      ),
                       PopupMenuItem(
                         value: 'workspace',
                         child: Row(
@@ -466,7 +532,9 @@ class _FileManagerPageState extends State<FileManagerPage> {
                   ];
                 },
                 onSelected: (v) {
-                  if (v == 'workspace' || v == 'choose_folder') {
+                  if (v == 'all_files_access') {
+                    _requestAllFilesAccess();
+                  } else if (v == 'workspace' || v == 'choose_folder') {
                     _changeLocalStorage(workspace: v == 'workspace');
                   } else if (v == "refresh") {
                     currentFileController.refresh();
@@ -1013,16 +1081,20 @@ class BottomSheetBody extends StatelessWidget {
   BottomSheet build(BuildContext context) {
     // ignore: no_leading_underscores_for_local_identifiers
     final _actions = actions ?? [];
+    // v12: 系统三键导航/手势条会压住底部操作栏, 预留底部安全区,
+    // 并把操作栏整体抬高, 保证按钮可点。
+    final bottomSafe = MediaQuery.of(context).viewPadding.bottom;
     return BottomSheet(
       builder: (BuildContext context) {
         return Container(
-            height: 65,
+            height: 65 + bottomSafe,
             alignment: Alignment.centerLeft,
             decoration: BoxDecoration(
                 color: MyTheme.accent50,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(10))),
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 15),
+              padding:
+                  EdgeInsets.only(left: 15, right: 15, bottom: bottomSafe),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
