@@ -2906,6 +2906,17 @@ impl Connection {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_start_cm_ipc(&mut self) {
+        // v10b (Kylin UKUI host-only): start_ipc() below unconditionally spawns
+        // a `rustdesk --cm` process when no _cm IPC endpoint exists -- that is
+        // the real source of the stubborn taskbar icon. The earlier guard in
+        // try_start_cm() only suppressed the Login message; the IPC bridge
+        // still ran and re-spawned --cm on every incoming connection. Opt out
+        // here so the bridge is never started and no --cm process is created.
+        #[cfg(target_os = "linux")]
+        if std::env::var("RUSTDESK_NO_CM_WINDOW").as_deref() == Ok("1") {
+            let _ = self.start_cm_ipc_para.take();
+            return;
+        }
         if let Some(p) = self.start_cm_ipc_para.take() {
             tokio::spawn(async move {
                 #[cfg(windows)]
