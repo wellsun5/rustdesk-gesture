@@ -1406,9 +1406,9 @@ class FfiModel with ChangeNotifier {
         final optSession = await bind.sessionGetOption(
             sessionId: sessionId, arg: kOptionTouchMode);
         // v10: default to touch mode on mobile when nothing was explicitly set.
-        // optLocal/optSession are only non-empty after a user choice, so this
-        // preserves any explicit mouse-mode ('N') preference.
-        _touchMode = optSession.isEmpty ? true : optSession != 'N';
+        // sessionGetOption returns String? -> null / '' both mean "no explicit
+        // choice"; only an explicit 'N' switches back to mouse mode.
+        _touchMode = optSession != 'N';
       }
     }
     if (isMobile) {
