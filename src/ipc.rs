@@ -998,15 +998,13 @@ async fn handle(data: Data, stream: &mut Connection) {
                         None
                     };
                 } else if name == "hide_cm" {
-                    // v10c (Kylin UKUI host-only): force the CM (connection
-                    // manager) control-panel window to stay hidden on Linux.
-                    // --cm must still run (it reads dirs for file transfer), but
-                    // its Flutter window + dock icon are the taskbar logo the
-                    // user wants gone. hide_cm=true makes main.dart call
-                    // hideCmWindow() (opacity 0 + hide + mainHideDock).
+                    // v10d: never hide CM via Dart on Linux. hide_cm=true makes main.dart
+                    // call hideCmWindow() -> setOpacity(0) crashes the Flutter
+                    // engine on Kylin/GLArea, killing the CM IPC listener and
+                    // breaking file transfer. Window is hidden at X11 layer instead.
                     #[cfg(target_os = "linux")]
                     {
-                        value = Some("true".to_string());
+                        value = Some("false".to_string());
                     }
                     #[cfg(not(target_os = "linux"))]
                     {
