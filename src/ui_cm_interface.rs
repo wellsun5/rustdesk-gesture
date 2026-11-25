@@ -200,6 +200,37 @@ pub trait InvokeUiCM: Send + Clone + 'static + Sized {
     fn file_transfer_log(&self, action: &str, log: &str);
 }
 
+// ===== v11 headless CM (Linux only) =====
+// On this Kylin host the CM Flutter window crashes during GL/Atk init, which
+// kills the CM IPC listener and leaves file transfer with an empty remote dir.
+// A headless handler lets --cm run the pure-Rust file-transfer IPC with NO
+// Flutter window at all (so no taskbar icon either). All InvokeUiCM callbacks
+// are UI-only notifications and are no-ops here; file operations are handled
+// in handle_fs() in Rust and do not need them.
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+pub struct HeadlessHandler;
+
+#[cfg(target_os = "linux")]
+impl InvokeUiCM for HeadlessHandler {
+    fn add_connection(&self, _client: &Client) {}
+    fn remove_connection(&self, _id: i32, _close: bool) {}
+    fn new_message(&self, _id: i32, _text: String) {}
+    fn change_theme(&self, _dark: String) {}
+    fn change_language(&self) {}
+    fn show_elevation(&self, _show: bool) {}
+    fn update_voice_call_state(&self, _client: &Client) {}
+    fn file_transfer_log(&self, _action: &str, _log: &str) {}
+}
+
+#[cfg(target_os = "linux")]
+pub fn start_cm_headless() {
+    let cm = ConnectionManager { ui_handler: HeadlessHandler };
+    std::thread::spawn(move || start_ipc(cm));
+}
+// ===== /v11 =====
+
+
 impl<T: InvokeUiCM> Deref for ConnectionManager<T> {
     type Target = T;
 
