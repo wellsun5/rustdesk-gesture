@@ -2193,6 +2193,15 @@ impl Connection {
                         self.retina.set_displays(&displays);
                     }
                     // A separate primary lookup here could race with display hot-plug.
+                    // v16: 固定主屏 —— Linux 下强制从第 0 块屏开始，不用系统报的 primary
+                    // (XWayland/多会话下 primary 可能是幽灵屏或登录界面，导致一连上就显示
+                    //  其它内容)。RUSTDESK_ALLOW_SWITCH_DISPLAY=1 可恢复官方行为。
+                    #[cfg(target_os = "linux")]
+                    let primary_display_idx = if std::env::var("RUSTDESK_ALLOW_SWITCH_DISPLAY").as_deref() == Ok("1") {
+                        primary_display_idx
+                    } else {
+                        0
+                    };
                     self.display_idx = primary_display_idx;
                     pi.displays = displays;
                     pi.current_display = self.display_idx as _;
@@ -5923,6 +5932,15 @@ impl Connection {
     async fn handle_cursor_switch_display(&mut self, pos: CursorPosition) {
         if self.multi_ui_session {
             return;
+        }
+        // v16: 固定主屏 —— Linux 下不因鼠标移到屏幕边缘而自动切屏。
+        // 本机仅一块物理屏，但 XWayland/多会话下底层偶尔误判多屏导致画面跳到
+        // 其它内容。禁用这条自动跟随，画面锁死在主屏(索引0)。RUSTDESK_ALLOW_SWITCH_DISPLAY=1 可恢复。
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var("RUSTDESK_ALLOW_SWITCH_DISPLAY").as_deref() != Ok("1") {
+                return;
+            }
         }
         let displays = super::display_service::get_sync_displays();
         let d_index = displays.iter().position(|d| {

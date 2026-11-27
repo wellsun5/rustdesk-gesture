@@ -472,6 +472,14 @@ fn run_cursor(sp: MouseCursorService, state: &mut StateCursor) -> ResultType<()>
 }
 
 fn run_window_focus(sp: EmptyExtraFieldService, state: &mut StateWindowFocus) -> ResultType<()> {
+    // v16: 固定主屏 —— Linux 下不因窗口焦点换屏而自动切屏（画面跳到其它内容）。
+    // RUSTDESK_ALLOW_SWITCH_DISPLAY=1 可恢复官方的自动跟随行为。
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("RUSTDESK_ALLOW_SWITCH_DISPLAY").as_deref() != Ok("1") {
+            return Ok(());
+        }
+    }
     let displays = super::display_service::get_sync_displays();
     if displays.len() <= 1 {
         return Ok(());
