@@ -36,6 +36,20 @@ fn finish_macos_update(result: hbb_common::ResultType<()>) -> Option<CoreMainAct
     }
 }
 
+/// v15: Linux 下默认禁止托盘驻留（任务栏右下角图标）。
+///
+/// 官方行为是 `--server` 启动后主动拉起一个 `--tray` 进程常驻托盘；本机作为
+/// 被控端长期后台运行，不需要托盘，图标纯属干扰。这里在**源头**关掉，而不是
+/// 事后杀进程：所有会拉起托盘的路径都先问这个开关，连进程都不 fork。
+///
+/// 需要恢复官方行为时：`export RUSTDESK_TRAY=1`（或写进 systemd 环境）。
+#[cfg(target_os = "linux")]
+fn tray_disabled() -> bool {
+    std::env::var("RUSTDESK_TRAY")
+        .map(|v| v != "1")
+        .unwrap_or(true)
+}
+
 /// shared by flutter and sciter main function
 ///
 /// [Note]
@@ -96,8 +110,9 @@ pub fn core_main() -> Option<CoreMainAction> {
     }
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if args.is_empty() {
+        // v15: Linux 下托盘默认禁用 —— 无参数启动（用户点图标）也不再拉起 --tray。
         #[cfg(target_os = "linux")]
-        let should_check_start_tray = crate::check_process("--server", false);
+        let should_check_start_tray = crate::check_process("--server", false) && !tray_disabled();
         // We can use `crate::check_process("--server", false)` on Windows.
         // Because `--server` process is the System user's process. We can't get the arguments in `check_process()`.
         // We can assume that self service running means the server is also running on Windows.
@@ -366,6 +381,15 @@ pub fn core_main() -> Option<CoreMainAction> {
                 return None;
             }
         } else if args[0] == "--tray" {
+            // v15: Linux 托盘的最终闸门 —— 即使还有别的路径把这个进程拉起来，
+            // 也在这里立刻退出，绝不在托盘驻留。RUSTDESK_TRAY=1 可恢复官方行为。
+            #[cfg(target_os = "linux")]
+            {
+                if tray_disabled() {
+                    log::info!("tray disabled on linux, exit (export RUSTDESK_TRAY=1 to enable)");
+                    return None;
+                }
+            }
             if !crate::check_process("--tray", true) {
                 crate::tray::start_tray();
             }
@@ -387,12 +411,18 @@ pub fn core_main() -> Option<CoreMainAction> {
             #[cfg(target_os = "linux")]
             {
                 hbb_common::allow_err!(crate::platform::check_autostart_config());
-                std::process::Command::new("pkill")
-                    .arg("-f")
-                    .arg(&format!("{} --tray", crate::get_app_name().to_lowercase()))
-                    .status()
-                    .ok();
-                hbb_common::allow_err!(crate::run_me(vec!["--tray"]));
+                // v15: 源头解决 —— 默认不 fork `--tray` 进程，托盘图标不出现。
+                // (官方行为是每次 --server 启动都先 pkill 旧托盘再拉新的；这里整段跳过。)
+                if !tray_disabled() {
+                    std::process::Command::new("pkill")
+                        .arg("-f")
+                        .arg(&format!("{} --tray", crate::get_app_name().to_lowercase()))
+                        .status()
+                        .ok();
+                    hbb_common::allow_err!(crate::run_me(vec!["--tray"]));
+                } else {
+                    log::info!("tray disabled on linux, skip starting --tray");
+                }
             }
             #[cfg(windows)]
             crate::privacy_mode::restore_reg_connectivity(true, false);
@@ -699,17 +729,6 @@ pub fn core_main() -> Option<CoreMainAction> {
             }
             return None;
         } else if args[0] == "--cm" {
-            // v11: headless CM mode for hosts where the CM Flutter window cannot
-            // render (GL/Atk crash). Runs the pure-Rust file-transfer IPC with no
-            // window and no taskbar icon. Triggered by RUSTDESK_CM_HEADLESS=1,
-            // inherited from the systemd --server process.
-            #[cfg(target_os = "linux")]
-            if std::env::var("RUSTDESK_CM_HEADLESS").as_deref() == Ok("1") {
-                crate::ui_interface::start_option_status_sync();
-                crate::ui_cm_interface::start_cm_headless();
-                // Keep this process alive running the IPC listener threads.
-                loop { std::thread::sleep(std::time::Duration::from_secs(3600)); }
-            }
             // call connection manager to establish connections
             // meanwhile, return true to call flutter window to show control panel
             crate::ui_interface::start_option_status_sync();
